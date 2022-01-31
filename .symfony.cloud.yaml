@@ -1,0 +1,70 @@
+name: app
+
+type: php:7.4
+
+runtime:
+    extensions:
+        - blackfire
+        - xsl
+        - amqp
+        - apcu
+        - mbstring
+        - sodium
+        - ctype
+        - iconv
+        - pdo_pgsql
+
+variables:
+    #php:
+        # uncomment on PHP 7.4+, needs Symfony 4.4.14+, 5.1.6+, or 5.2+
+        #opcache.preload: /app/src/.preload.php
+    php-ext:
+        redis: 5.3.1
+build:
+    flavor: none
+
+web:
+    locations:
+        "/":
+            root: "public"
+            expires: 1h
+            passthru: "/index.php"
+
+disk: 512
+
+mounts:
+    "/var": { source: local, source_path: var }
+    "/public/uploads": { source: service, service: files, source_path: uploads }
+
+hooks:
+    build: |
+        set -x -e
+
+        curl -s https://get.symfony.com/cloud/configurator | (>&2 bash)
+        
+        (>&2 symfony-build)
+
+    deploy: |
+        set -x -e
+        (>&2 symfony-deploy)
+crons:
+    comment_cleanup:
+        # Cleanup every night at 11:50 pm (UTC)
+        spec: '50 23 * * *'
+        cmd: |
+            if [ "$SYMFONY_BRANCH" = "master" ]; then
+                croncape symfony console app:comment:cleanup
+            fi
+
+workers:
+    messages:
+        commands:
+            start: |
+                set -x -e
+                (>&2 symfony-deploy)
+                php bin/console messenger:consume async -vv --time-limit=3600 --memory-limit=128M
+
+relationships:
+    database: "db:postgresql"
+    redis: "rediscache:redis"
+    rabbitmq: "queue:rabbitmq"
